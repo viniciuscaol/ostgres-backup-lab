@@ -1,0 +1,35 @@
+name: Backup and restore CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: PostgreSQL backup and recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate shell scripts
+        run: |
+          for script in scripts/*.sh; do bash -n "$script"; done
+          shellcheck -x scripts/*.sh
+      - name: Validate Compose
+        run: docker compose config --quiet
+      - name: Start isolated databases
+        run: docker compose up -d --wait --wait-timeout 120 source-db restore-db
+      - name: Exercise backups and failure scenarios
+        run: docker compose run --rm runner bash scripts/integration.sh
+      - name: Database logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=100
+      - name: Remove disposable CI volumes
+        if: always()
+        run: docker compose down --volumes --remove-orphans

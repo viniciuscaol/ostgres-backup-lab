@@ -1,0 +1,72 @@
+name: postgres-backup-lab
+
+x-postgres: &postgres
+  image: postgres:17-bookworm
+  restart: unless-stopped
+  healthcheck:
+    test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d postgres']
+    interval: 2s
+    timeout: 3s
+    retries: 30
+
+services:
+  source-db:
+    <<: *postgres
+    environment:
+      POSTGRES_DB: lab
+      POSTGRES_USER: lab
+      POSTGRES_PASSWORD: lab-source-only
+    volumes:
+      - source-data:/var/lib/postgresql/data
+      - ./sql/seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    networks: [source]
+
+  restore-db:
+    <<: *postgres
+    environment:
+      POSTGRES_USER: verifier
+      POSTGRES_PASSWORD: lab-restore-only
+    volumes:
+      - restore-data:/var/lib/postgresql/data
+    networks: [restore]
+
+  runner:
+    image: postgres:17-bookworm
+    profiles: [tools]
+    restart: "no"
+    working_dir: /lab
+    entrypoint: []
+    command: [bash, scripts/backup.sh]
+    environment:
+      PGHOST: source-db
+      PGPORT: "5432"
+      PGUSER: lab
+      PGPASSWORD: lab-source-only
+      PGDATABASE: lab
+      PGCONNECT_TIMEOUT: "5"
+      RESTORE_HOST: restore-db
+      RESTORE_PORT: "5432"
+      RESTORE_USER: verifier
+      RESTORE_PASSWORD: lab-restore-only
+      BACKUP_DIR: /backups
+      KEEP_BACKUPS: "3"
+    volumes:
+      - .:/lab:ro
+      - backups:/backups
+    networks: [source, restore]
+    depends_on:
+      source-db:
+        condition: service_healthy
+      restore-db:
+        condition: service_healthy
+
+networks:
+  source:
+    internal: true
+  restore:
+    internal: true
+
+volumes:
+  source-data:
+  restore-data:
+  backups:
